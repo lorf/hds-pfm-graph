@@ -1,0 +1,766 @@
+#!/usr/bin/perl -w
+#
+# $Id$
+#
+
+use strict;
+
+use RRDs;
+use Date::Manip;
+use Getopt::Std;
+use POSIX;
+
+use vars qw($me $header_match $header $subsys $sample @samples $struct);
+use vars qw($verbose @colors $step $start $end %opts $out_dir $index_html);
+
+sub usage {
+	print <<_EOT_;
+$me - Presents Hitachi DF600/DF700 statistics, collected with
+Storage Navigator Modular, in graphic form.
+usage: $me [-v] [-d outdir] pfm*.txt
+_EOT_
+	exit 1
+}
+
+$index_html = 'index.htm';
+
+$header_match = [
+	{
+		subsys => 'Port',
+		key => [ 'CTL', 'Port' ],
+		re => qr/^CTL\s+Port\s+IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'Port',
+			'IO Rate(IOPS)',
+			'Read Rate(IOPS)',
+			'Write Rate(IOPS)',
+			'Read Hit(%)',
+			'Write Hit(%)',
+			'Trans. Rate(MB/S)',
+			'Read Trans. Rate(MB/S)',
+			'Write Trans. Rate(MB/S)',
+		],
+	}, {
+		subsys => 'Port',
+		key => [ 'CTL', 'Port' ],
+		re => qr/^CTL\s+Port\s+Read CMD Count/,
+		cap => [
+			'CTL',
+			'Port',
+			'Read CMD Count',
+			'Write CMD Count',
+			'Read CMD Hit Count',
+			'Write CMD Hit Count',
+			'Read Trans. Size(MB)',
+			'Write Trans. Size(MB)',
+		],
+	}, {
+		subsys => 'Port',
+		key => [ 'CTL', 'Port' ],
+		re => qr/^CTL\s+Port\s+CTL CMD IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'Port',
+			'CTL CMD IO Rate(IOPS)',
+			'CTL CMD Trans. Rate(KB/S)',
+			'CTL CMD Count',
+			'CTL CMD Trans. Size(KB)',
+			'CTL CMD Time(microsec.)',
+			'CTL CMD Max Time(microsec.)',
+		],
+	}, {
+		subsys => 'Port',
+		key => [ 'CTL', 'Port' ],
+		re => qr/^CTL\s+Port\s+Data CMD IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'Port',
+			'Data CMD IO Rate(IOPS)',
+			'Data CMD Trans. Rate(MB/S)',
+			'Data CMD Count',
+			'Data CMD Trans. Size(MB)',
+			'Data CMD Time(microsec.)',
+			'Data CMD Max Time(microsec.)',
+		],
+	}, {
+		subsys => 'Port',
+		key => [ 'CTL', 'Port' ],
+		re => qr/^CTL\s+Port\s+Timeout Error Count/,
+		cap => [
+			'CTL',
+			'Port',
+			'Timeout Error Count',
+		],
+	}, {
+		subsys => 'RG',
+		key => [ 'CTL', 'RG' ],
+		re => qr/^CTL\s+RG\s+IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'RG',
+			'IO Rate(IOPS)',
+			'Read Rate(IOPS)',
+			'Write Rate(IOPS)',
+			'Read Hit(%)',
+			'Write Hit(%)',
+			'Trans. Rate(MB/S)',
+			'Read Trans. Rate(MB/S)',
+			'Write Trans. Rate(MB/S)',
+		],
+	}, {	
+		subsys => 'RG',
+		key => [ 'CTL', 'RG' ],
+		re => qr/^CTL\s+RG\s+Read CMD Count/,
+		cap => [
+			'CTL',
+			'RG',
+			'Read CMD Count',
+			'Write CMD Count',
+			'Read CMD Hit Count',
+			'Write CMD Hit Count',
+			'Read Trans. Size(MB)',
+			'Write Trans. Size(MB)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'LU',
+			'IO Rate(IOPS)',
+			'Read Rate(IOPS)',
+			'Write Rate(IOPS)',
+			'Read Hit(%)',
+			'Write Hit(%)',
+			'Trans. Rate(MB/S)',
+			'Read Trans. Rate(MB/S)',
+			'Write Trans. Rate(MB/S)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read CMD Count',
+			'Write CMD Count',
+			'Read CMD Hit Count',
+			'Write CMD Hit Count',
+			'Read Trans. Size(MB)',
+			'Write Trans. Size(MB)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read CMD Hit Count2/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read CMD Hit Count2',
+			'Read CMD Hit Time(microsec.)',
+			'Read CMD Hit Max Time(microsec.)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write CMD Hit Count2/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write CMD Hit Count2',
+			'Write CMD Hit Time(microsec.)',
+			'Write CMD Hit Max Time(microsec.)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read CMD Miss Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read CMD Miss Count',
+			'Read CMD Miss Time(microsec.)',
+			'Read CMD Miss Max Time(microsec.)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write CMD Miss Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write CMD Miss Count',
+			'Write CMD Miss Time(microsec.)',
+			'Write CMD Miss Max Time(microsec.)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read CMD Job Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read CMD Job Count',
+			'Read CMD Job Time(microsec.)',
+			'Read CMD Job Max Time(microsec.)',
+		],
+	}, {	
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write CMD Job Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write CMD Job Count',
+			'Write CMD Job Time(microsec.)',
+			'Write CMD Job Max Time(microsec.)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read Hit Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read Hit Delay CMD Count(<300ms)',
+			'Read Hit Delay CMD Count(300-499ms)',
+			'Read Hit Delay CMD Count(500-999ms)',
+			'Read Hit Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write Hit Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write Hit Delay CMD Count(<300ms)',
+			'Write Hit Delay CMD Count(300-499ms)',
+			'Write Hit Delay CMD Count(500-999ms)',
+			'Write Hit Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read Miss Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read Miss Delay CMD Count(<300ms)',
+			'Read Miss Delay CMD Count(300-499ms)',
+			'Read Miss Delay CMD Count(500-999ms)',
+			'Read Miss Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write Miss Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write Miss Delay CMD Count(<300ms)',
+			'Write Miss Delay CMD Count(300-499ms)',
+			'Write Miss Delay CMD Count(500-999ms)',
+			'Write Miss Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Read Job Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Read Job Delay CMD Count(<300ms)',
+			'Read Job Delay CMD Count(300-499ms)',
+			'Read Job Delay CMD Count(500-999ms)',
+			'Read Job Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Write Job Delay CMD Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Write Job Delay CMD Count(<300ms)',
+			'Write Job Delay CMD Count(300-499ms)',
+			'Write Job Delay CMD Count(500-999ms)',
+			'Write Job Delay CMD Count(1000ms-)',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Tag Count/,
+		cap => [
+			'CTL',
+			'LU',
+			'Tag Count',
+		],
+	}, {
+		subsys => 'LU',
+		key => [ 'CTL', 'LU' ],
+		re => qr/^CTL\s+LU\s+Data CMD IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'LU',
+			'Data CMD IO Rate(IOPS)',
+			'Data CMD Trans. Rate(MB/S)',
+			'Data CMD Count',
+			'Data CMD Trans. Size(MB)',
+			'Data CMD Time(microsec.)',
+			'Data CMD Max Time(microsec.)',
+		],
+	}, {
+		subsys => 'Cache',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Write Pending Rate/,
+		cap => [
+			'CTL',
+			'Write Pending Rate(%)',
+		],
+	}, {
+		subsys => 'Cache',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Clean Queue Usage Rate/,
+		cap => [
+			'CTL',
+			'Clean Queue Usage Rate(%)',
+			'Middle Queue Usage Rate(%)',
+			'Physical Queue Usage Rate(%)',
+			'Total Queue Usage Rate(%)',
+		],
+	}, {
+		subsys => 'Cache',
+		key => [ 'CTL', 'Partition' ],
+		re => qr/^CTL\s+Partition\s+Write Pending Rate/,
+		cap => [
+			'CTL',
+			'Partition',
+			'Write Pending Rate(%)',
+		],
+	}, {
+		subsys => 'Cache',
+		key => [ 'CTL', 'Partition' ],
+		re => qr/^CTL\s+Partition\s+Clean Queue Usage Rate/,
+		cap => [
+			'CTL',
+			'Partition',
+			'Clean Queue Usage Rate(%)',
+			'Middle Queue Usage Rate(%)',
+			'Physical Queue Usage Rate(%)',
+		],
+	}, {
+		subsys => 'Processor',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Usage\(\%\)/,
+		cap => [
+			'CTL',
+			'Usage(%)',
+		],
+	}, {
+		subsys => 'Processor',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Host-Cache Bus Usage Rate/,
+		cap => [
+			'CTL',
+			'Host-Cache Bus Usage Rate(%)',
+			'Drive-Cache Bus Usage Rate(%)',
+			'Processor-Cache Bus Usage Rate(%)',
+		],
+	}, {
+		subsys => 'Processor',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Cache\(DRR\) Bus Usage Rate/,
+		cap => [
+			'CTL',
+			'Cache(DRR) Bus Usage Rate(%)',
+			'Dual Bus Usage Rate(%)',
+			'Total Bus Usage Rate(%)',
+		],
+	}, {
+		subsys => 'Drive',
+		key => [ 'CTL', 'Unit', 'HDU' ],
+		re => qr/^CTL\s+Unit\s+HDU\s+IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'Unit',
+			'HDU',
+			'IO Rate(IOPS)',
+			'Read Rate(IOPS)',
+			'Write Rate(IOPS)',
+			'Trans. Rate(MB/S)',
+			'Read Trans. Rate(MB/S)',
+			'Write Trans. Rate(MB/S)',
+			'Online Verify Rate(IOPS)',
+		],
+	}, {
+		subsys => 'Drive',
+		key => [ 'CTL', 'Unit', 'HDU' ],
+		re => qr/^CTL\s+Unit\s+HDU\s+Read CMD Count/,
+		cap => [
+			'CTL',
+			'Unit',
+			'HDU',
+			'Read CMD Count',
+			'Write CMD Count',
+			'Read Trans. Size',
+			'Write Trans. Size',
+			'Online Verify CMD Count',
+		],
+	}, {
+		subsys => 'Drive Operate',
+		key => [ 'CTL', 'Unit', 'HDU' ],
+		re => qr/^CTL\s+Unit\s+HDU\s+Operating Rate/,
+		cap => [
+			'CTL',
+			'Unit',
+			'HDU',
+			'Operating Rate(%)',
+			'Tag Count',
+			'Unload Time(min.)',
+		],
+	}, {
+		subsys => 'Backend',
+		key => [ 'CTL', 'Path', 'Loop' ],
+		re => qr/^CTL\s+Path\s+Loop\s+IO Rate\(IOPS\)/,
+		cap => [
+			'CTL',
+			'Path',
+			'Loop',
+			'IO Rate(IOPS)',
+			'Read Rate(IOPS)',
+			'Write Rate(IOPS)',
+			'Trans. Rate(MB/S)',
+			'Read Trans. Rate(MB/S)',
+			'Write Trans. Rate(MB/S)',
+			'Online Verify Rate(IOPS)',
+		],
+	}, {
+		subsys => 'Backend',
+		key => [ 'CTL', 'Path', 'Loop' ],
+		re => qr/^CTL\s+Path\s+Loop\s+Read CMD Count/,
+		cap => [
+			'CTL',
+			'Path',
+			'Loop',
+			'Read CMD Count',
+			'Write CMD Count',
+			'Read Trans. Size',
+			'Write Trans. Size',
+			'Online Verify CMD Count',
+		],
+	},
+];
+
+@colors = (
+	'00ff00',	# Green
+	'0000ff',	# Blue
+	'ff0000',	# Red
+	'a020f0',	# Magenta
+	'ffa500',	# Orange
+	'a52a2a',	# Brown
+	'00ffff',	# Cyan
+	'00aa00',	# Dark Green
+	'eeee00',	# Yellow
+	'707070',	# Dark Gray
+	'be711d',	# Rust 11
+	'dad1ff',	# Lilas
+	'7df5cb',	# Biz green
+	'ff81a9',	# Pink
+	'ffe114',	# Golden
+	'96a125',	# Olive
+	'ffd8ae',	# Peaches
+	'bebebe',	# Light Grey
+	'ebeec3',	# Taupe
+	'860033',	# Bourgogne
+	'19a48a',	# Ocean green
+	'b8a390',	# VLB
+	'a3c5a6',	# Blackboard green
+	'ffd2b2',	# Light orange
+	'000000',	# Black
+	'fff8bd',	# Post-it (tm) Yellow
+	'c7eaff',	# Ice blue
+	'd3ff52',	# Gatorade green
+);
+
+($me = $0) =~ s!.*/!!;
+getopts 'd:hv', \%opts;
+&usage
+	if $opts{h};
+&usage
+	unless @ARGV;
+$verbose = $opts{v} || '';
+$out_dir = $opts{d} || '.';
+
+# Set Asia/Novosibirsk time zone for Date::Manip
+Date_Init("TZ=F-6G");
+
+sub update_struct {
+	my $tree = shift;
+	while (my $key = shift) {
+		my $leaf;
+
+		$leaf = $tree->{names}{$key};
+		unless ($leaf) {
+			$leaf = { name => $key, data => [], names => {} };
+			push @{$tree->{data}}, $leaf;
+			$tree->{names}{$key} = $leaf;
+		}
+		$tree = $leaf;
+	}
+}
+
+$struct = {};
+FILE: for my $file (@ARGV) {
+	open IN, $file
+		or die "can't open $file: $!";
+	LINE: while (<IN>) {
+		chomp;
+		next
+			unless /\S/;
+		if (/^No\.\s*(\d+)$/) {
+			$sample = {};
+			push @samples, $sample;
+			$subsys = '';
+			undef $header;
+			$sample->{num} = $1;
+		} elsif (m!^(\d+/\d+/\d+\s+\d+:\d+:\d+)\s+-\s+(\d+/\d+/\d+\s+\d+:\d+:\d+)$!) {
+			$sample->{start} = ParseDate $1;
+			$sample->{end} = ParseDate $2;
+		} elsif (/^----\s+([\w\s]+?)(\s+Information)?\s+----$/) {
+			$subsys = $1;
+		} elsif (/^CTL/) {	# Header
+			undef $header;
+			for my $hm (@{$header_match}) {
+				if (/$hm->{re}/ and $subsys eq $hm->{subsys}) {
+					$header = $hm;
+					last;
+				}
+			}
+			warn "$me: warning: unknown header in $file/$subsys: $_"
+				unless $header;
+		} else {	# Data line
+			next
+				unless defined $header;
+
+			use Data::Dumper;
+			s/^\s*|\s*$//g;
+			my @cap = @{$header->{cap}};
+			my @values = split /\s+/;
+			unless (@{$header->{cap}} == @values) {
+				warn "$me: warning: unmatched number of values in "
+					. "$file/$subsys - @{[ join '-', @{$header->{cap}} ]}";
+			}
+			my %values = map { (shift @cap) => $_ } @values;
+
+			my ($key, $cap);
+
+			my $nodetype = '';
+			my $node = '';
+			for $key (@{$header->{key}}) {
+				$nodetype .= ", "
+					if $nodetype;
+				$nodetype .= $key;
+
+				$node .= ", "
+					if $node;
+				$node .= "$key=$values{$key}";
+			}
+
+			CAP: for $cap (keys %values) {
+				for $key (@{$header->{key}}) {
+					next CAP
+						if $cap eq $key;
+				}
+
+				$sample->{data}{$subsys}{$nodetype}{$cap}{$node} = $values{$cap};
+				&update_struct($struct, $subsys, $nodetype, $cap, $node);
+			}
+		}
+	}
+}
+
+# Sort samples by start time
+@samples = sort { Date_Cmp($a->{start}, $b->{start}) } @samples;
+$start = UnixDate($samples[0]->{start}, "%s");
+$end = UnixDate($samples[-1]->{end}, "%s");
+# Calculate average sample duration
+my $sum_time = 0;
+for $sample (@samples) {
+	$sum_time += UnixDate($sample->{end}, "%s")
+		- UnixDate($sample->{start}, "%s");
+}
+my $average_sample_time = int($sum_time / @samples + .5);
+# Calculate step time
+$sum_time = 0;
+my $valid_samples = 0;
+for my $ii (0 .. $#samples - 1) {
+	my $interval = UnixDate($samples[$ii + 1]->{end}, "%s")
+		- UnixDate($samples[$ii]->{end}, "%s");
+	if ($interval <= 2 * $average_sample_time) {
+		$sum_time += $interval;
+		$valid_samples++;
+	}
+}
+$step = int($sum_time / $valid_samples + .5);
+
+-d $out_dir
+	or mkdir $out_dir
+		or die "can't create directory $out_dir: $!";
+
+my %html_index;
+my $html_images = '';
+my $graph_comment =
+	UnixDate($samples[0]->{start}, "%Y-%m-%d %H\\:%M\\:%S") . " - "
+	. UnixDate($samples[-1]->{end}, "%Y-%m-%d %H\\:%M\\:%S");
+for $subsys (@{$struct->{data}}) {
+	my $html_subsys_name = "subsys-$subsys->{name}";
+	$html_subsys_name =~ s/\s/_/g;
+	$html_subsys_name =~ s/([^\w_\-])/sprintf "x%02x", ord $1/ge;
+
+	$html_images .= "<hr>\n";
+
+	for my $nodetype (@{$subsys->{data}}) {
+		for my $cap (@{$nodetype->{data}}) {
+			my (@nodes, $node, $filename, $filepath, $err, @cmd);
+
+			$filename = lc "$subsys->{name}-$cap->{name}";
+			$filename =~ s/\s/_/g;
+			$filename =~ s/([^\w\-_])/sprintf "x%02x", ord $1/ge;
+			$filepath = "$out_dir/$filename";
+
+			for my $nodename (@{$cap->{data}}) {
+				my $dsname = $nodename->{name};
+				$dsname =~ s/[^\w_\-]/_/g;
+				$dsname =~ tr/_//s;
+				push @nodes, { name => $nodename->{name}, ds => $dsname };
+			}
+
+			@cmd = ("$filepath.rrd", "--start", $start - 1, "--step", $step,
+				(map { "DS:$_->{ds}:GAUGE:@{[$step * 2]}:U:U" } @nodes),
+				"RRA:AVERAGE:0:1:300",
+				"RRA:MIN:0:1:300",
+				"RRA:MAX:0:1:300");
+			RRDs::create @cmd;
+			die "RRDs::create @cmd: $err\n"
+				if $err = RRDs::error;
+
+			for $sample (@samples) {
+				my $timestamp = UnixDate($sample->{end}, "%s");
+				my @values;
+				for $node (@nodes) {
+					push @values,
+						(defined $sample->{data}{$subsys->{name}}{$nodetype->{name}}{$cap->{name}}{$node->{name}} ?
+						$sample->{data}{$subsys->{name}}{$nodetype->{name}}{$cap->{name}}{$node->{name}} : 'U');
+				}
+				@cmd = ("$filepath.rrd", "$timestamp:" . join(':', @values));
+				RRDs::update @cmd;
+				die "RRDs::update @cmd: $err\n"
+					if $err = RRDs::error;
+			}
+
+			my $colornum = 0;
+			my $maxnamelen = 0;
+			for (@nodes) {
+				$maxnamelen = length $_->{name}
+					if $maxnamelen < length $_->{name};
+			}
+			@cmd = ("$filepath.png",
+				"--title", "$subsys->{name} - $cap->{name}",
+				"--start", $start, "--end", $end,
+				"--lower-limit", "0",
+				"--alt-autoscale-max",
+				"--slope-mode",
+				"--imgformat", "PNG",
+				"--width", "500",
+				"--height", "120",
+				(map { (
+					"DEF:$_->{ds}=$filepath.rrd:$_->{ds}:AVERAGE",
+					"LINE1:$_->{ds}#@{[@colors[$colornum++ % @colors]]}"
+						. ":$_->{name}"
+						. "@{[' ' x ($maxnamelen - length $_->{name})]}\\:",
+					"CDEF:cdef_$_->{ds}=$_->{ds}",
+					"GPRINT:cdef_$_->{ds}:AVERAGE:Average\\:%5.0lf%s",
+					"GPRINT:cdef_$_->{ds}:MIN:Min\\:%5.0lf%s",
+					"GPRINT:cdef_$_->{ds}:MAX:Max\\:%5.0lf%s\\n",
+				) } @nodes),
+				"COMMENT:$graph_comment");
+			my ($rrd_averages, $rrd_xsize, $rrd_ysize) = RRDs::graph @cmd;
+			die "RRDs::graph @cmd: $err\n"
+				if $err = RRDs::error;
+
+			my $html_name = "param-$subsys->{name}-$cap->{name}";
+			$html_name =~ s/\s/_/g;
+			$html_name =~ s/([^\w_\-])/sprintf "x%02x", ord $1/ge;
+			$html_index{$subsys->{name}} .=
+				"<li><a href=\"#$html_name\">$cap->{name}</a></li>\n";
+			$html_images .= "<a name=\"$html_name\"></a>"
+				. "<p>$subsys->{name} - $cap->{name} "
+				. "(<a href=\"#top\">Top</a>, "
+				. "<a href=\"#$html_subsys_name\">$subsys->{name}</a>):<br>"
+				. "<img src=\"$filename.png\" alt=\"$subsys->{name} "
+				. "- $cap->{name}\" "
+				. "width=\"$rrd_xsize\" height=\"$rrd_ysize\"></p>\n";
+		}
+	}
+}
+
+open INDEX, ">$out_dir/$index_html"
+	or die "can't open $out_dir/$index_html: $!";
+
+print INDEX <<_EOT_;
+<html>
+<body bgcolor=white>
+<a name="top"></a>
+<table border=1>
+<tr>
+ <th>Samples</th>
+ <td>@{[scalar @samples]}</td>
+</tr>
+<tr>
+ <th>Step</th>
+ <td>$step sec.</td>
+</tr>
+<tr>
+ <th>Start</th>
+ <td>@{[UnixDate($samples[0]->{start}, "%Y-%m-%d %H:%M:%S")]}</td>
+</tr>
+<tr>
+ <th>End</th>
+ <td>@{[UnixDate($samples[-1]->{end}, "%Y-%m-%d %H:%M:%S")]}</td>
+</tr>
+</table>
+_EOT_
+
+print INDEX "\n\n<ul>\n";
+for (@{$struct->{data}}) {
+	my $html_subsys_name = "subsys-$_->{name}";
+	$html_subsys_name =~ s/\s/_/g;
+	$html_subsys_name =~ s/([^\w_\-])/sprintf "x%02x", ord $1/ge;
+	print INDEX "<li><a href=\"#$html_subsys_name\">$_->{name}</a></li>\n";
+}
+print INDEX "\n</ul>\n\n<ul>\n";
+
+for (@{$struct->{data}}) {
+	my $html_subsys_name = "subsys-$_->{name}";
+	$html_subsys_name =~ s/\s/_/g;
+	$html_subsys_name =~ s/([^\w_\-])/sprintf "x%02x", ord $1/ge;
+
+	print INDEX <<_EOT_;
+<a name=\"$html_subsys_name\"></a><li>$_->{name}<ul>
+$html_index{$_->{name}}
+</ul></li>
+_EOT_
+}
+
+print INDEX <<_EOT_;
+</ul>
+$html_images
+</body>
+</html>
+_EOT_
+
+close INDEX;
