@@ -1,5 +1,12 @@
 #!/usr/bin/perl -w
 #
+# Script to parse Hitachi DF600 (Thunder series, 95xx) and DF700
+# (AMS/WMS series) storage arrays performance data (collected with
+# Storage Navigator Modular auperform CLI command or Performance tool in
+# GUI) and create a nice graphs of the data.
+#
+# Requires rrdtool and Date::Manip perl module.
+#
 # $Id$
 #
 
@@ -8,21 +15,26 @@ use strict;
 use RRDs;
 use Date::Manip;
 use Getopt::Std;
-use POSIX;
 
 use vars qw($me $header_match $header $subsys $sample @samples $struct);
 use vars qw($verbose @colors $step $start $end %opts $out_dir $index_html);
+use vars qw($timezone);
 
 sub usage {
 	print <<_EOT_;
-$me - Presents Hitachi DF600/DF700 statistics, collected with
-Storage Navigator Modular, in graphic form.
+$me - Parse Hitachi DF600/DF700 statistics, collected with
+Storage Navigator Modular (auperform CLI command or Performance tool in GUI),
+and create graphs.
 usage: $me [-v] [-d outdir] pfm*.txt
 _EOT_
 	exit 1
 }
 
-$index_html = 'index.htm';
+$out_dir = 'out';
+$index_html = 'index.html';
+
+# Date::Manip -- Set Asia/Novosibirsk time zone
+$timezone = 'F-6G';
 
 $header_match = [
 	{
@@ -487,16 +499,16 @@ $header_match = [
 );
 
 ($me = $0) =~ s!.*/!!;
-getopts 'd:hv', \%opts;
+getopts 'o:hv', \%opts;
 &usage
 	if $opts{h};
 &usage
 	unless @ARGV;
 $verbose = $opts{v} || '';
-$out_dir = $opts{d} || '.';
+$out_dir = $opts{o} if $opts{o};
 
-# Set Asia/Novosibirsk time zone for Date::Manip
-Date_Init("TZ=F-6G");
+# Set time zone for Date::Manip
+Date_Init("TZ=$timezone");
 
 sub update_struct {
 	my $tree = shift;
