@@ -17,21 +17,25 @@ use Date::Manip;
 use Getopt::Std;
 
 use vars qw($me $header_match $header $subsys $sample @samples $struct);
-use vars qw($verbose @colors $step $start $end %opts $out_dir $index_html);
-use vars qw($timezone);
+use vars qw(@colors $step_time $start_time $end_time);
+use vars qw(%opts %options $timezone $numsamples);
 
 sub usage {
 	print <<_EOT_;
 $me - Parse Hitachi DF600/DF700 statistics, collected with
 Storage Navigator Modular (auperform CLI command or Performance tool in GUI),
 and create graphs.
-usage: $me [-v] [-d outdir] pfm*.txt
+usage: $me [-o outdir] [-s start_time|start_sample_num]
+       @{[' ' x length $me]} [-e end_time|end_sample_num] pfm*.txt
 _EOT_
 	exit 1
 }
 
-$out_dir = 'out';
-$index_html = 'index.html';
+$options{outdir} = 'out';
+# Width and height of the graph canvas
+$options{graph_width} = 1000;
+$options{graph_height} = 240;
+$options{index_html} = 'index.html';
 
 # Date::Manip -- Set Asia/Novosibirsk time zone
 $timezone = 'F-6G';
@@ -498,17 +502,34 @@ $header_match = [
 	'd3ff52',	# Gatorade green
 );
 
+# Set time zone for Date::Manip
+Date_Init("TZ=$timezone");
+
 ($me = $0) =~ s!.*/!!;
-getopts 'o:hv', \%opts;
+getopts 'o:h', \%opts;
 &usage
 	if $opts{h};
 &usage
 	unless @ARGV;
-$verbose = $opts{v} || '';
-$out_dir = $opts{o} if $opts{o};
-
-# Set time zone for Date::Manip
-Date_Init("TZ=$timezone");
+$options{outdir} = $opts{o} if $opts{o};
+if ($opts{s}) {
+	if ($opts{s} =~ /^#?(\d+)$/) {
+		$options{start_sample} = $1;
+	} else {
+		unless ($options{start_time} = ParseDate $opts{s}) {
+			die "Invalid time specification: $opts{s}\n";
+		}
+	}
+}
+if ($opts{e}) {
+	if ($opts{e} =~ /^#?(\d+)$/) {
+		$options{end_sample} = $opts{e};
+	} else {
+		unless ($options{end_time} = ParseDate $opts{e}) {
+			die "Invalid time specification: $opts{e}\n";
+		}
+	}
+}
 
 sub update_struct {
 	my $tree = shift;
@@ -558,7 +579,6 @@ FILE: for my $file (@ARGV) {
 			next
 				unless defined $header;
 
-			use Data::Dumper;
 			s/^\s*|\s*$//g;
 			my @cap = @{$header->{cap}};
 			my @values = split /\s+/;
@@ -597,8 +617,21 @@ FILE: for my $file (@ARGV) {
 
 # Sort samples by start time
 @samples = sort { Date_Cmp($a->{start}, $b->{start}) } @samples;
-$start = UnixDate($samples[0]->{start}, "%s");
-$end = UnixDate($samples[-1]->{end}, "%s");
+if (defined $options{end_time}) {
+	@samples = grep { Date_Cmp($options{end_time}, $_->{end}) >= 0 }
+		@samples;
+} elsif (defined $options{end_sample}) {
+	splice @samples, $options{end_sample};
+}
+if (defined $options{start_time}) {
+	@samples = grep { Date_Cmp($options{start_time}, $_->{start}) <= 0 }
+		@samples;
+} elsif (defined $options{start_sample}) {
+	splice @samples, 0, $options{start_sample} - 1;
+}
+$numsamples = @samples;
+$start_time = UnixDate($samples[0]->{start}, "%s");
+$end_time = UnixDate($samples[-1]->{end}, "%s");
 # Calculate average sample duration
 my $sum_time = 0;
 for $sample (@samples) {
@@ -617,11 +650,11 @@ for my $ii (0 .. $#samples - 1) {
 		$valid_samples++;
 	}
 }
-$step = int($sum_time / $valid_samples + .5);
+$step_time = int($sum_time / $valid_samples + .5);
 
--d $out_dir
-	or mkdir $out_dir
-		or die "can't create directory $out_dir: $!";
+-d $options{outdir}
+	or mkdir $options{outdir}
+		or die "can't create directory $options{outdir}: $!";
 
 my %html_index;
 my $html_images = '';
@@ -642,7 +675,7 @@ for $subsys (@{$struct->{data}}) {
 			$filename = lc "$subsys->{name}-$cap->{name}";
 			$filename =~ s/\s/_/g;
 			$filename =~ s/([^\w\-_])/sprintf "x%02x", ord $1/ge;
-			$filepath = "$out_dir/$filename";
+			$filepath = "$options{outdir}/$filename";
 
 			for my $nodename (@{$cap->{data}}) {
 				my $dsname = $nodename->{name};
@@ -651,11 +684,11 @@ for $subsys (@{$struct->{data}}) {
 				push @nodes, { name => $nodename->{name}, ds => $dsname };
 			}
 
-			@cmd = ("$filepath.rrd", "--start", $start - 1, "--step", $step,
-				(map { "DS:$_->{ds}:GAUGE:@{[$step * 2]}:U:U" } @nodes),
-				"RRA:AVERAGE:0:1:300",
-				"RRA:MIN:0:1:300",
-				"RRA:MAX:0:1:300");
+			@cmd = ("$filepath.rrd", "--start", $start_time - 1, "--step", $step_time,
+				(map { "DS:$_->{ds}:GAUGE:@{[$step_time * 2]}:U:U" } @nodes),
+				"RRA:AVERAGE:0:1:$numsamples",
+				"RRA:MIN:0:1:$numsamples",
+				"RRA:MAX:0:1:$numsamples");
 			RRDs::create @cmd;
 			die "RRDs::create @cmd: $err\n"
 				if $err = RRDs::error;
@@ -682,13 +715,13 @@ for $subsys (@{$struct->{data}}) {
 			}
 			@cmd = ("$filepath.png",
 				"--title", "$subsys->{name} - $cap->{name}",
-				"--start", $start, "--end", $end,
+				"--start", $start_time, "--end", $end_time,
 				"--lower-limit", "0",
 				"--alt-autoscale-max",
 				"--slope-mode",
 				"--imgformat", "PNG",
-				"--width", "500",
-				"--height", "120",
+				"--width", $options{graph_width},
+				"--height", $options{graph_height},
 				(map { (
 					"DEF:$_->{ds}=$filepath.rrd:$_->{ds}:AVERAGE",
 					"LINE1:$_->{ds}#@{[@colors[$colornum++ % @colors]]}"
@@ -720,8 +753,8 @@ for $subsys (@{$struct->{data}}) {
 	}
 }
 
-open INDEX, ">$out_dir/$index_html"
-	or die "can't open $out_dir/$index_html: $!";
+open INDEX, ">$options{outdir}/$options{index_html}"
+	or die "can't open $options{outdir}/$options{index_html}: $!";
 
 print INDEX <<_EOT_;
 <html>
@@ -730,11 +763,11 @@ print INDEX <<_EOT_;
 <table border=1>
 <tr>
  <th>Samples</th>
- <td>@{[scalar @samples]}</td>
+ <td>$numsamples</td>
 </tr>
 <tr>
  <th>Step</th>
- <td>$step sec.</td>
+ <td>$step_time sec.</td>
 </tr>
 <tr>
  <th>Start</th>
