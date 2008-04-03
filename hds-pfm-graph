@@ -519,11 +519,16 @@ $header_match = [
 	'd3ff52',	# Gatorade green
 );
 
+sub vmsg {
+	print STDERR "@_"
+		if $options{verbose};
+}
+
 # Set time zone for Date::Manip
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:s:e:l:h', \%opts;
+getopts 'o:s:e:l:hv', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -549,6 +554,7 @@ if ($opts{e}) {
 }
 $options{maxlu} = $opts{l}
 	if $opts{l};
+$options{verbose} = $opts{v} || '';
 
 sub update_struct {
 	my $tree = shift;
@@ -579,6 +585,7 @@ FILE: for my $file (@ARGV) {
 			$subsys = '';
 			undef $header;
 			$sample->{num} = $1;
+			vmsg "\rParsing sample # $sample->{num}";
 		} elsif (m!^(\d+/\d+/\d+\s+\d+:\d+:\d+)\s+-\s+(\d+/\d+/\d+\s+\d+:\d+:\d+)$!) {
 			$sample->{start} = ParseDate $1;
 			$sample->{end} = ParseDate $2;
@@ -599,22 +606,25 @@ FILE: for my $file (@ARGV) {
 				unless defined $header;
 
 			s/^\s*|\s*$//g;
-			my @cap = @{$header->{cap}};
 			my @values = split /\s+/;
+
+			# Limit maximum LU number for DF600
+			if ($options{maxlu}) {
+				if (@{$header->{key}} == 2
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'LU'
+					and $values[1] > $options{maxlu})
+				{
+					next;
+				}
+			}
+
+			my @cap = @{$header->{cap}};
 			unless (@{$header->{cap}} == @values) {
 				warn "$me: warning: unmatched number of values in "
 					. "$file/$subsys - @{[ join '-', @{$header->{cap}} ]}";
 			}
 			my %values = map { (shift @cap) => $_ } @values;
-
-			# Limit maximum LU number for DF600
-			if ($options{maxlu}) {
-				if ($header->{key}[0] eq 'CTL' and $header->{key}[1] eq 'LU'
-						and $values{LU} > $options{maxlu})
-				{
-					next;
-				}
-			}
 
 			my ($key, $cap);
 
@@ -642,6 +652,8 @@ FILE: for my $file (@ARGV) {
 		}
 	}
 }
+
+vmsg "\n";
 
 # Sort samples by start time
 @samples = sort { Date_Cmp($a->{start}, $b->{start}) } @samples;
@@ -689,6 +701,7 @@ my $html_images = '';
 my $graph_comment =
 	UnixDate($samples[0]->{start}, "%Y-%m-%d %H\\:%M\\:%S") . " - "
 	. UnixDate($samples[-1]->{end}, "%Y-%m-%d %H\\:%M\\:%S");
+my $dsnum = 0;
 for $subsys (@{$struct->{data}}) {
 	my $html_subsys_name = "subsys-$subsys->{name}";
 	$html_subsys_name =~ s/\s/_/g;
@@ -700,16 +713,20 @@ for $subsys (@{$struct->{data}}) {
 		for my $cap (@{$nodetype->{data}}) {
 			my (@nodes, $node, $filename, $filepath, $err, @cmd);
 
+			vmsg "Creating graph for $subsys->{name}-$cap->{name}\n";
+
 			$filename = lc "$subsys->{name}-$cap->{name}";
 			$filename =~ s/\s/_/g;
 			$filename =~ s/([^\w\-_])/sprintf "x%02x", ord $1/ge;
 			$filepath = "$options{outdir}/$filename";
 
 			for my $nodename (@{$cap->{data}}) {
-				my $dsname = $nodename->{name};
-				$dsname =~ s/[^\w_\-]/_/g;
-				$dsname =~ tr/_//s;
+				#my $dsname = $nodename->{name};
+				#$dsname =~ s/[^\w_\-]/_/g;
+				#$dsname =~ tr/_//s;
+				my $dsname = "ds$dsnum";
 				push @nodes, { name => $nodename->{name}, ds => $dsname };
+				$dsnum++;
 			}
 
 			@cmd = ("$filepath.rrd", "--start", $start_time - 1, "--step", $step_time,
@@ -780,6 +797,8 @@ for $subsys (@{$struct->{data}}) {
 		}
 	}
 }
+
+vmsg "Creating $options{index_html}\n";
 
 open INDEX, ">$options{outdir}/$options{index_html}"
 	or die "can't open $options{outdir}/$options{index_html}: $!";
