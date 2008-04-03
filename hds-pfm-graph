@@ -667,7 +667,7 @@ FILE: for my $file (@ARGV) {
 	}
 }
 
-vmsg "\n";
+vmsg "\nSorting samples";
 
 # Sort samples by start time
 @samples = sort { Date_Cmp($a->{start}, $b->{start}) } @samples;
@@ -727,7 +727,7 @@ for $subsys (@{$struct->{data}}) {
 		for my $cap (@{$nodetype->{data}}) {
 			my (@nodes, $node, $filename, $filepath, $err, @cmd);
 
-			vmsg "Creating graph for $subsys->{name}-$cap->{name}\n";
+			vmsg "\nCreating graph for $subsys->{name}-$cap->{name}";
 
 			$filename = lc "$subsys->{name}-$cap->{name}";
 			$filename =~ s/\s/_/g;
@@ -809,7 +809,7 @@ for $subsys (@{$struct->{data}}) {
 	}
 }
 
-vmsg "Creating $options{index_html}\n";
+vmsg "\nCreating $options{index_html}";
 
 open INDEX, ">$options{outdir}/$options{index_html}"
 	or die "can't open $options{outdir}/$options{index_html}: $!";
@@ -867,3 +867,5 @@ $html_images
 _EOT_
 
 close INDEX;
+
+vmsg "\n";
