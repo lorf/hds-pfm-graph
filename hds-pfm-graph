@@ -10,9 +10,9 @@
 # Example statistics collection command:
 #   auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
 #
-# DF600 arrays output LU and HDU information for nonexistent LU's and
-# HDU's, You may want to limit maximum LU number and maximum HDU unit
-# number with -L and -U options.
+# DF600 arrays output LU, RG and HDU information for nonexistent LU's,
+# RG's and HDU's, You may want to limit maximum LU, RG and HDU unit
+# number with -L, -R and -U options.
 #
 # $Id$
 #
@@ -530,7 +530,7 @@ sub vmsg {
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:s:e:L:U:hv', \%opts;
+getopts 'o:s:e:L:R:U:hv', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -556,6 +556,8 @@ if ($opts{e}) {
 }
 $options{maxlu} = $opts{L}
 	if $opts{L};
+$options{maxrg} = $opts{R}
+	if $opts{R};
 $options{maxunit} = $opts{U}
 	if $opts{U};
 $options{verbose} = $opts{v} || '';
@@ -618,6 +620,16 @@ FILE: for my $file (@ARGV) {
 				and $header->{key}[0] eq 'CTL'
 				and $header->{key}[1] eq 'LU'
 				and $values[1] > $options{maxlu})
+			{
+				next;
+			}
+
+			# Limit maximum RG number for DF600
+			if ($options{maxrg}
+				and @{$header->{key}} == 2
+				and $header->{key}[0] eq 'CTL'
+				and $header->{key}[1] eq 'RG'
+				and $values[1] > $options{maxrg})
 			{
 				next;
 			}
