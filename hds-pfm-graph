@@ -10,8 +10,9 @@
 # Example statistics collection command:
 #   auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
 #
-# DF600 arrays output LU information for nonexistent LU's, You may want
-# to limit maximum LU number with -l option.
+# DF600 arrays output LU and HDU information for nonexistent LU's and
+# HDU's, You may want to limit maximum LU number and maximum HDU unit
+# number with -L and -U options.
 #
 # $Id$
 #
@@ -32,7 +33,8 @@ $me - Parse Hitachi DF600/DF700 statistics, collected with
 Storage Navigator Modular (auperform CLI command or Performance tool in GUI),
 and create graphs.
 usage: $me [-o outdir] [-s start_time|start_sample_num]
-       @{[' ' x length $me]} [-e end_time|end_sample_num] pfm*.txt
+       @{[' ' x length $me]} [-e end_time|end_sample_num]
+       @{[' ' x length $me]} [-L MaxLU] [-U MaxUnit] pfm*.txt
 _EOT_
 	exit 1
 }
@@ -528,7 +530,7 @@ sub vmsg {
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:s:e:l:hv', \%opts;
+getopts 'o:s:e:L:U:hv', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -552,8 +554,10 @@ if ($opts{e}) {
 		}
 	}
 }
-$options{maxlu} = $opts{l}
-	if $opts{l};
+$options{maxlu} = $opts{L}
+	if $opts{L};
+$options{maxunit} = $opts{U}
+	if $opts{U};
 $options{verbose} = $opts{v} || '';
 
 sub update_struct {
@@ -609,14 +613,24 @@ FILE: for my $file (@ARGV) {
 			my @values = split /\s+/;
 
 			# Limit maximum LU number for DF600
-			if ($options{maxlu}) {
-				if (@{$header->{key}} == 2
-					and $header->{key}[0] eq 'CTL'
-					and $header->{key}[1] eq 'LU'
-					and $values[1] > $options{maxlu})
-				{
-					next;
-				}
+			if ($options{maxlu}
+				and @{$header->{key}} == 2
+				and $header->{key}[0] eq 'CTL'
+				and $header->{key}[1] eq 'LU'
+				and $values[1] > $options{maxlu})
+			{
+				next;
+			}
+
+			# Limit maximum Array Unit number for DF600
+			if ($options{maxunit}
+				and @{$header->{key}} == 3
+				and $header->{key}[0] eq 'CTL'
+				and $header->{key}[1] eq 'Unit'
+				and $header->{key}[2] eq 'HDU'
+				and $values[1] > $options{maxunit})
+			{
+				next;
 			}
 
 			my @cap = @{$header->{cap}};
@@ -721,9 +735,6 @@ for $subsys (@{$struct->{data}}) {
 			$filepath = "$options{outdir}/$filename";
 
 			for my $nodename (@{$cap->{data}}) {
-				#my $dsname = $nodename->{name};
-				#$dsname =~ s/[^\w_\-]/_/g;
-				#$dsname =~ tr/_//s;
 				my $dsname = "ds$dsnum";
 				push @nodes, { name => $nodename->{name}, ds => $dsname };
 				$dsnum++;
