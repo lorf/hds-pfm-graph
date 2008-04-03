@@ -7,6 +7,12 @@
 #
 # Requires rrdtool and Date::Manip perl module.
 #
+# Example statistics collection command:
+#   auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
+#
+# DF600 arrays output LU information for nonexistent LU's, You may want
+# to limit maximum LU number with -l option.
+#
 # $Id$
 #
 
@@ -369,12 +375,23 @@ $header_match = [
 			'Physical Queue Usage Rate(%)',
 		],
 	}, {
+		# DF700 processor info
 		subsys => 'Processor',
 		key => [ 'CTL' ],
-		re => qr/^CTL\s+Usage\(\%\)/,
+		re => qr/^CTL\s+Usage\(\%\)$/,
 		cap => [
 			'CTL',
 			'Usage(%)',
+		],
+	}, {
+		# DF600 processor info
+		subsys => 'Processor',
+		key => [ 'CTL' ],
+		re => qr/^CTL\s+Usage\(\%\)\s+Host I\/O Stop Time/,
+		cap => [
+			'CTL',
+			'Usage(%)',
+			'Host I/O Stop Time(microsec.)',
 		],
 	}, {
 		subsys => 'Processor',
@@ -506,7 +523,7 @@ $header_match = [
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:h', \%opts;
+getopts 'o:s:e:l:h', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -530,6 +547,8 @@ if ($opts{e}) {
 		}
 	}
 }
+$options{maxlu} = $opts{l}
+	if $opts{l};
 
 sub update_struct {
 	my $tree = shift;
@@ -587,6 +606,15 @@ FILE: for my $file (@ARGV) {
 					. "$file/$subsys - @{[ join '-', @{$header->{cap}} ]}";
 			}
 			my %values = map { (shift @cap) => $_ } @values;
+
+			# Limit maximum LU number for DF600
+			if ($options{maxlu}) {
+				if ($header->{key}[0] eq 'CTL' and $header->{key}[1] eq 'LU'
+						and $values{LU} > $options{maxlu})
+				{
+					next;
+				}
+			}
 
 			my ($key, $cap);
 
