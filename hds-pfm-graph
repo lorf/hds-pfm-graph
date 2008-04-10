@@ -11,8 +11,9 @@
 #   auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
 #
 # DF600 arrays output LU, RG and HDU information for nonexistent LU's,
-# RG's and HDU's, You may want to limit maximum LU, RG and HDU unit
-# number with -L, -R and -U options.
+# RG's and HDU's. You may want to limit maximum LU, RG and HDU unit
+# number with -L, -R and -U options. Or better use "-Q <array_name>"
+# options to query array for existing objects using SNM-CLI commands.
 #
 # $Id$
 #
@@ -25,7 +26,7 @@ use Getopt::Std;
 
 use vars qw($me $header_match $header $subsys $sample @samples $struct);
 use vars qw(@colors $step_time $start_time $end_time);
-use vars qw(%opts %options $timezone $numsamples);
+use vars qw(%opts %options $timezone $numsamples %array);
 
 sub usage {
 	print <<_EOT_;
@@ -34,7 +35,8 @@ Storage Navigator Modular (auperform CLI command or Performance tool in GUI),
 and create graphs.
 usage: $me [-o outdir] [-s start_time|start_sample_num]
        @{[' ' x length $me]} [-e end_time|end_sample_num]
-       @{[' ' x length $me]} [-L MaxLU] [-U MaxUnit] pfm*.txt
+       @{[' ' x length $me]} [-L MaxLU] [-R MaxRG] [-U MaxUnit] pfm*.txt
+       @{[' ' x length $me]} [-Q array_name] [-v] pfm*.txt
 _EOT_
 	exit 1
 }
@@ -530,7 +532,7 @@ sub vmsg {
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:s:e:L:R:U:hv', \%opts;
+getopts 'o:s:e:L:R:U:Q:hv', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -560,6 +562,8 @@ $options{maxrg} = $opts{R}
 	if $opts{R};
 $options{maxunit} = $opts{U}
 	if $opts{U};
+$options{query_array} = $opts{Q}
+	if $opts{Q};
 $options{verbose} = $opts{v} || '';
 
 sub update_struct {
@@ -575,6 +579,43 @@ sub update_struct {
 		}
 		$tree = $leaf;
 	}
+}
+
+if ($options{query_array}) {
+	vmsg "Quering array $options{query_array}";
+
+	open LU, "auluref -unit $options{query_array} |"
+		or die "Can't spawn auluref: $!";
+	while (<LU>) {
+		s/^\s*|\s*$//g;
+		my $lu = (split /\s+/)[0];
+		$array{lu}{$lu} = 1
+			unless $lu =~ /\D/;
+	}
+	close LU;
+
+	open RG, "aurgref -unit $options{query_array} |"
+		or die "Can't spawn aurgref: $!";
+	while (<RG>) {
+		s/^\s*|\s*$//g;
+		my $rg = (split /\s+/)[0];
+		$array{rg}{$rg} = 1
+			unless $rg =~ /\D/;
+	}
+	close RG;
+
+	open DR, "audrive -unit $options{query_array} -status |"
+		or die "Can't spawn audrive: $!";
+	while (<DR>) {
+		s/^\s*|\s*$//g;
+		my ($unit, $hdu) = split /\s+/;
+		unless ($unit =~ /\D/ or $hdu =~ /\D/) {
+			$array{drive}{$unit}{$hdu} = 1;
+		}
+	}
+	close DR;
+
+	vmsg "\n";
 }
 
 $struct = {};
@@ -614,35 +655,67 @@ FILE: for my $file (@ARGV) {
 			s/^\s*|\s*$//g;
 			my @values = split /\s+/;
 
-			# Limit maximum LU number for DF600
-			if ($options{maxlu}
-				and @{$header->{key}} == 2
-				and $header->{key}[0] eq 'CTL'
-				and $header->{key}[1] eq 'LU'
-				and $values[1] > $options{maxlu})
-			{
-				next;
-			}
+			if ($options{query_array}) {
 
-			# Limit maximum RG number for DF600
-			if ($options{maxrg}
-				and @{$header->{key}} == 2
-				and $header->{key}[0] eq 'CTL'
-				and $header->{key}[1] eq 'RG'
-				and $values[1] > $options{maxrg})
-			{
-				next;
-			}
+				# Filter LU's
+				if (@{$header->{key}} == 2
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'LU'
+					and not $array{lu}{$values[1]})
+				{
+					next;
+				}
 
-			# Limit maximum Array Unit number for DF600
-			if ($options{maxunit}
-				and @{$header->{key}} == 3
-				and $header->{key}[0] eq 'CTL'
-				and $header->{key}[1] eq 'Unit'
-				and $header->{key}[2] eq 'HDU'
-				and $values[1] > $options{maxunit})
-			{
-				next;
+				# Filter RG's
+				if (@{$header->{key}} == 2
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'RG'
+					and not $array{rg}{$values[1]})
+				{
+					next;
+				}
+
+				# Filter drives
+				if (@{$header->{key}} == 3
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'Unit'
+					and $header->{key}[2] eq 'HDU'
+					and not $array{drive}{$values[1]}{$values[2]})
+				{
+					next;
+				}
+			} else {
+
+				# Limit maximum LU number for DF600
+				if ($options{maxlu}
+					and @{$header->{key}} == 2
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'LU'
+					and $values[1] > $options{maxlu})
+				{
+					next;
+				}
+
+				# Limit maximum RG number for DF600
+				if ($options{maxrg}
+					and @{$header->{key}} == 2
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'RG'
+					and $values[1] > $options{maxrg})
+				{
+					next;
+				}
+
+				# Limit maximum Array Unit number for DF600
+				if ($options{maxunit}
+					and @{$header->{key}} == 3
+					and $header->{key}[0] eq 'CTL'
+					and $header->{key}[1] eq 'Unit'
+					and $header->{key}[2] eq 'HDU'
+					and $values[1] > $options{maxunit})
+				{
+					next;
+				}
 			}
 
 			my @cap = @{$header->{cap}};
