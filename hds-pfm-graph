@@ -813,6 +813,17 @@ for my $ii (0 .. $#samples - 1) {
 }
 $step_time = int($sum_time / $valid_samples + .5);
 
+vmsg "\nSorting structure";
+for $subsys (@{$struct->{data}}) {
+	for my $nodetype (@{$subsys->{data}}) {
+		@{$nodetype->{data}} = sort {
+			(my $a1 = $a->{name}) =~ s/^(\S+)\s+(.*?)$/$2$1/;
+			(my $b1 = $b->{name}) =~ s/^(\S+)\s+(.*?)$/$2$1/;
+			$a1 cmp $b1;
+		} @{$nodetype->{data}};
+	}
+}
+
 -d $options{outdir}
 	or mkdir $options{outdir}
 		or die "can't create directory $options{outdir}: $!";
@@ -834,7 +845,7 @@ for $subsys (@{$struct->{data}}) {
 		for my $cap (@{$nodetype->{data}}) {
 			my (@nodes, $node, $filename, $filepath, $err, @cmd);
 
-			vmsg "\nCreating graph for $subsys->{name}-$cap->{name}";
+			vmsg "\nCreating graph: $subsys->{name} - $cap->{name}";
 
 			$filename = lc "$subsys->{name}-$cap->{name}";
 			$filename =~ s/\s/_/g;
