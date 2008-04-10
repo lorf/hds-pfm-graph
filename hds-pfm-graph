@@ -1,22 +1,28 @@
 #!/usr/bin/perl -w
 #
-# Script to parse Hitachi DF600 (Thunder series, 95xx) and DF700
-# (AMS/WMS series) storage arrays performance data (collected with
-# Storage Navigator Modular auperform CLI command or Performance tool in
-# GUI) and create a nice graphs of the data.
-#
-# Requires rrdtool and Date::Manip perl module.
-#
-# Example statistics collection command:
-#   auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
-#
-# DF600 arrays output LU, RG and HDU information for nonexistent LU's,
-# RG's and HDU's. You may want to limit maximum LU, RG and HDU unit
-# number with -L, -R and -U options. Or better use "-Q <array_name>"
-# options to query array for existing objects using SNM-CLI commands.
-#
 # $Id$
 #
+
+=pod
+
+=head1 hds-pfm-graph
+
+Script to parse Hitachi DF600 (Thunder series, 95xx) and DF700
+(AMS/WMS series) storage arrays performance data (collected with
+Storage Navigator Modular auperform CLI command or Performance tool in
+GUI) and create a nice graphs of the data.
+
+Requires rrdtool and Date::Manip perl module.
+
+Example statistics collection command:
+  auperform -unit ams500-a -pfmstatis -auto 1 -count 120 -cat
+
+DF600 arrays output LU, RG and HDU information for nonexistent LU's,
+RG's and HDU's. You may want to limit maximum LU, RG and HDU unit
+number with -L, -R and -U options. Or better use "-Q <array_name>"
+option to query array for existing objects using SNM-CLI commands.
+
+=cut
 
 use strict;
 
@@ -35,8 +41,8 @@ Storage Navigator Modular (auperform CLI command or Performance tool in GUI),
 and create graphs.
 usage: $me [-o outdir] [-s start_time|start_sample_num]
        @{[' ' x length $me]} [-e end_time|end_sample_num]
-       @{[' ' x length $me]} [-L MaxLU] [-R MaxRG] [-U MaxUnit] pfm*.txt
-       @{[' ' x length $me]} [-Q array_name] [-v] pfm*.txt
+       @{[' ' x length $me]} [-L MaxLU] [-R MaxRG] [-U MaxHDU]
+       @{[' ' x length $me]} [-Q array_name] [-q] pfm*.txt
 _EOT_
 	exit 1
 }
@@ -46,6 +52,7 @@ $options{outdir} = 'out';
 $options{graph_width} = 1000;
 $options{graph_height} = 240;
 $options{index_html} = 'index.html';
+$options{verbose} = 1;
 
 # Date::Manip -- Set Asia/Novosibirsk time zone
 $timezone = 'F-6G';
@@ -492,6 +499,7 @@ $header_match = [
 	},
 ];
 
+# Colors from Orca
 @colors = (
 	'00ff00',	# Green
 	'0000ff',	# Blue
@@ -532,7 +540,7 @@ sub vmsg {
 Date_Init("TZ=$timezone");
 
 ($me = $0) =~ s!.*/!!;
-getopts 'o:s:e:L:R:U:Q:hv', \%opts;
+getopts 'o:s:e:L:R:U:Q:hq', \%opts;
 &usage
 	if $opts{h};
 &usage
@@ -564,7 +572,8 @@ $options{maxunit} = $opts{U}
 	if $opts{U};
 $options{query_array} = $opts{Q}
 	if $opts{Q};
-$options{verbose} = $opts{v} || '';
+$options{verbose} = ''
+	if $opts{q};
 
 sub update_struct {
 	my $tree = shift;
@@ -583,14 +592,17 @@ sub update_struct {
 
 if ($options{query_array}) {
 	vmsg "Quering array $options{query_array}";
+	my ($num_drives, $num_units, $num_rgs, $num_lus) = (0, 0, 0, 0);
 
 	open LU, "auluref -unit $options{query_array} |"
 		or die "Can't spawn auluref: $!";
 	while (<LU>) {
 		s/^\s*|\s*$//g;
 		my $lu = (split /\s+/)[0];
-		$array{lu}{$lu} = 1
-			unless $lu =~ /\D/;
+		unless ($lu =~ /\D/) {
+			$array{lu}{$lu} = 1;
+			$num_lus++;
+		}
 	}
 	close LU;
 
@@ -599,8 +611,10 @@ if ($options{query_array}) {
 	while (<RG>) {
 		s/^\s*|\s*$//g;
 		my $rg = (split /\s+/)[0];
-		$array{rg}{$rg} = 1
-			unless $rg =~ /\D/;
+		unless ($rg =~ /\D/) {
+			$array{rg}{$rg} = 1;
+			$num_rgs++;
+		}
 	}
 	close RG;
 
@@ -611,11 +625,19 @@ if ($options{query_array}) {
 		my ($unit, $hdu) = split /\s+/;
 		unless ($unit =~ /\D/ or $hdu =~ /\D/) {
 			$array{drive}{$unit}{$hdu} = 1;
+			$num_drives++;
 		}
 	}
+	$num_units = scalar keys %{$array{drive}};
 	close DR;
 
-	vmsg "\n";
+	vmsg "\nArray $options{query_array}: $num_units HDUs,",
+		"max HDU: @{[ (sort { $a <=> $b } keys %{$array{drive}})[-1] ]}\n";
+	vmsg "Array $options{query_array}: $num_drives drives\n";
+	vmsg "Array $options{query_array}: $num_rgs RGs,",
+		"max RG: @{[ (sort { $a <=> $b } keys %{$array{rg}})[-1] ]}\n";
+	vmsg "Array $options{query_array}: $num_lus LUs,",
+		"max LU: @{[ (sort { $a <=> $b } keys %{$array{lu}})[-1] ]}\n";
 }
 
 $struct = {};
