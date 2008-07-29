@@ -49,7 +49,7 @@ _EOT_
 
 $options{outdir} = 'out';
 # Width and height of the graph canvas
-$options{graph_width} = 1000;
+$options{graph_width} = 920;
 $options{graph_height} = 240;
 $options{index_html} = 'index.html';
 $options{verbose} = 1;
