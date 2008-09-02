@@ -7,10 +7,12 @@
 
 =head1 hds-pfm-graph
 
-Script to parse Hitachi DF600 (Thunder series, 95xx) and DF700
-(AMS/WMS series) storage arrays performance data (collected with
-Storage Navigator Modular auperform CLI command or Performance tool in
-GUI) and create a nice graphs of the data.
+Script to parse Hitachi DF600 (Thunder series, 95xx) and DF700 (AMS/WMS
+series) storage arrays performance data (collected with Storage
+Navigator Modular auperform CLI command or Performance tool in GUI)
+and create a nice graphs of the data. Note, You will need to enable
+Performance statistics collection on the array before being able to
+gather it.
 
 Requires rrdtool and Date::Manip perl module.
 
