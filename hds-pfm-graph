@@ -813,6 +813,8 @@ for my $ii (0 .. $#samples - 1) {
 		$valid_samples++;
 	}
 }
+die "\nNo valid samples found in input\n"
+	unless $valid_samples > 0;
 $step_time = int($sum_time / $valid_samples + .5);
 
 vmsg "\nSorting structure";
